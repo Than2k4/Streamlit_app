@@ -1,80 +1,108 @@
-import streamlit as st
-import cv2
 import io
-import base64
+import numpy as np
+import cv2
+import streamlit as st
 from ultralytics import YOLO
-from PIL import Image
-from io import BytesIO
+from ultralytics.utils import LOGGER
 
 class Inference:
-    def __init__(self, model_path=None):
-        # Khởi tạo mô hình và các tham số cấu hình
-        self.model = None
-        self.model_path = model_path
-        self.conf = 0.25  # Confidence threshold
-        self.iou = 0.45  # IoU threshold
+    def __init__(self, model=None):
+        self.source = None
+        self.enable_trk = False
+        self.conf = 0.25
+        self.iou = 0.45
+        self.org_frame = None
+        self.ann_frame = None
+        self.vid_file_name = None
         self.selected_ind = []
-
-        if self.model_path:
-            self.model = YOLO(self.model_path)  # Tải mô hình YOLO nếu có đường dẫn mô hình
+        self.model = YOLO(model) if model else None
 
     def web_ui(self):
-        """Tạo giao diện web cho Streamlit."""
-        st.title("Ứng Dụng Phát Hiện Đối Tượng Real-time với YOLO")
+        st.set_page_config(page_title="Ultralytics Streamlit App", layout="wide")
+        st.title("Ultralytics YOLO Streamlit Application 🚀")
+        st.subheader("Real-time Object Detection on Webcam or Video Files")
 
     def sidebar(self):
-        """Tạo Sidebar cho các cấu hình như threshold, mô hình..."""
-        self.conf = st.sidebar.slider("Confidence Threshold", 0.0, 1.0, self.conf, 0.01)
-        self.iou = st.sidebar.slider("IoU Threshold", 0.0, 1.0, self.iou, 0.01)
-        
-    def capture_webcam(self):
-        """Mở webcam và thực hiện phát hiện đối tượng."""
-        cap = cv2.VideoCapture(0)  # Mở webcam
+        with st.sidebar:
+            st.image("https://raw.githubusercontent.com/ultralytics/assets/main/logo/Ultralytics_Logotype_Original.svg", width=250)
+            st.title("User Configuration")
+            self.source = st.selectbox("Video Source", ("webcam", "video"))
+            self.enable_trk = st.radio("Enable Tracking", ("Yes", "No"))
+            self.conf = st.slider("Confidence Threshold", 0.0, 1.0, self.conf, 0.01)
+            self.iou = st.slider("IoU Threshold", 0.0, 1.0, self.iou, 0.01)
 
-        if not cap.isOpened():
-            st.error("Không thể mở webcam.")
-            return
+        col1, col2 = st.columns(2)
+        self.org_frame = col1.empty()
+        self.ann_frame = col2.empty()
 
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                st.error("Không thể lấy khung hình từ webcam.")
-                break
+    def source_upload(self):
+        """Handles video file uploads and webcam input."""
+        self.vid_file_name = None
 
-            # Chạy YOLO inference trên khung hình
-            results = self.model(frame, conf=self.conf, iou=self.iou)
+        if self.source == "video":
+            vid_file = st.sidebar.file_uploader("Upload Video File", type=["mp4", "mov", "avi", "mkv"])
+            if vid_file:
+                g = io.BytesIO(vid_file.read())
+                with open("uploaded_video.mp4", "wb") as out:
+                    out.write(g.read())
+                self.vid_file_name = "uploaded_video.mp4"
+        elif self.source == "webcam":
+            img_file = st.camera_input("Start Webcam")
+            if img_file:
+                bytes_data = img_file.getvalue()
+                self.vid_file_name = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
 
-            # Vẽ các kết quả lên khung hình
-            annotated_frame = results[0].plot()
-
-            # Hiển thị khung hình gốc và khung hình đã annotate
-            st.image(frame, channels="BGR", caption="Khung Hình Gốc")
-            st.image(annotated_frame, channels="BGR", caption="Khung Hình Phát Hiện Đối Tượng")
-
-            # Chuyển đổi frame đã annotate thành base64 để gửi đi (nếu cần)
-            img_pil = Image.fromarray(annotated_frame)
-            buffered = BytesIO()
-            img_pil.save(buffered, format="JPEG")
-            img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
-            # Bạn có thể gửi base64 image này qua WebSocket hoặc các phương thức khác (chưa triển khai ở đây)
-            # socket.emit('receive_img', img_base64)
-            
-            # Dừng inference khi nhấn nút
-            if st.button("Dừng Inference"):
-                cap.release()  # Dừng webcam
-                st.stop()  # Dừng ứng dụng Streamlit
-
-        cap.release()  # Giải phóng webcam
+    def configure(self):
+        """Configures the model and selects classes for inference."""
+        if self.model:
+            class_names = list(self.model.names.values())
+            selected_classes = st.sidebar.multiselect("Classes", class_names, default=class_names[:3])
+            self.selected_ind = [class_names.index(option) for option in selected_classes]
 
     def inference(self):
-        """Chạy ứng dụng phát hiện đối tượng."""
-        self.web_ui()  # Giao diện chính
-        self.sidebar()  # Sidebar để người dùng cấu hình
+        """Performs object detection inference."""
+        self.web_ui()
+        self.sidebar()
+        self.source_upload()
+        self.configure()
 
-        # Bắt đầu capture webcam
-        self.capture_webcam()
+        if st.sidebar.button("Start"):
+            stop_button = st.button("Stop")
+            
+            if isinstance(self.vid_file_name, str):  # Process video file
+                cap = cv2.VideoCapture(self.vid_file_name)
+                if not cap.isOpened():
+                    st.error("Could not open video file.")
+                    return
+                
+                while cap.isOpened():
+                    success, frame = cap.read()
+                    if not success:
+                        st.warning("Failed to read frame.")
+                        break
+
+                    results = self.model.track(frame, conf=self.conf, iou=self.iou, classes=self.selected_ind) if self.enable_trk == "Yes" else self.model(frame, conf=self.conf, iou=self.iou, classes=self.selected_ind)
+                    annotated_frame = results[0].plot()
+
+                    if stop_button:
+                        cap.release()
+                        st.stop()
+
+                    self.org_frame.image(frame, channels="BGR")
+                    self.ann_frame.image(annotated_frame, channels="BGR")
+
+                cap.release()
+                cv2.destroyAllWindows()
+
+            elif isinstance(self.vid_file_name, np.ndarray):  # Process webcam input
+                frame = self.vid_file_name
+                results = self.model(frame, conf=self.conf, iou=self.iou, classes=self.selected_ind)
+                annotated_frame = results[0].plot()
+
+                self.org_frame.image(frame, channels="BGR")
+                self.ann_frame.image(annotated_frame, channels="BGR")
 
 if __name__ == "__main__":
-    # Khởi tạo và chạy ứng dụng Inference
-    inference = Inference(model_path="yolov5s.pt")  # Thay "yolov5s.pt" bằng đường dẫn mô hình YOLO của bạn
-    inference.inference()
+    import sys
+    model_path = sys.argv[1] if len(sys.argv) > 1 else None
+    Inference(model=model_path).inference()
