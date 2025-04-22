@@ -123,10 +123,8 @@ class Inference:
                     out.write(g.read())  # Read bytes into file
                 self.vid_file_name = "ultralytics.mp4"
         elif self.source == "webcam":
-            img_file = st.camera_input("Start Webcam")
-            if img_file:
-                bytes_data = img_file.getvalue()
-                self.vid_file_name = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
+            self.vid_file_name = 0  # Use webcam index 0
+
     def configure(self):
         """Configure the model and load selected classes for inference."""
         # Add dropdown menu for model selection
