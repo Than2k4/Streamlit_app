@@ -9,7 +9,12 @@ from ultralytics import YOLO
 from ultralytics.utils import LOGGER
 from ultralytics.utils.checks import check_requirements
 from ultralytics.utils.downloads import GITHUB_ASSETS_STEMS
-from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, RTCConfiguration
+from streamlit_webrtc import (
+    webrtc_streamer,
+    VideoTransformerBase,
+    RTCConfiguration,
+    WebRtcMode,
+)
 
 # Cấu hình STUN server để WebRTC hoạt động tốt trên môi trường deploy
 RTC_CONFIGURATION = RTCConfiguration(
@@ -52,7 +57,7 @@ class VideoFileTransformer(VideoTransformerBase):
     def transform(self, frame):
         success, img = self.cap.read()
         if not success:
-            return frame  # Khi hết video, giữ nguyên khung cũ
+            return frame
         if self.enable_trk:
             results = self.model.track(
                 img, conf=self.conf, iou=self.iou, classes=self.classes, persist=True
@@ -123,7 +128,7 @@ class Inference:
                     f.write(vid.read())
                 webrtc_streamer(
                     key="video",
-                    mode="SENDRECV",
+                    mode=WebRtcMode.SENDRECV,
                     rtc_configuration=RTC_CONFIGURATION,
                     video_processor_factory=lambda: VideoFileTransformer(
                         path=path,
@@ -137,7 +142,7 @@ class Inference:
         else:
             webrtc_streamer(
                 key="webcam",
-                mode="SENDRECV",
+                mode=WebRtcMode.SENDRECV,
                 rtc_configuration=RTC_CONFIGURATION,
                 video_processor_factory=lambda: YOLOTransformer(
                     model=self.model,
