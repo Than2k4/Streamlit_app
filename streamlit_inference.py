@@ -68,19 +68,21 @@ class Inference:
 
         if st.sidebar.button("Start"):
             stop_button = st.button("Stop")
-            
+
+            # Check if we're processing video or webcam input
             if isinstance(self.vid_file_name, str):  # Process video file
                 cap = cv2.VideoCapture(self.vid_file_name)
                 if not cap.isOpened():
                     st.error("Could not open video file.")
                     return
-                
+
                 while cap.isOpened():
                     success, frame = cap.read()
                     if not success:
                         st.warning("Failed to read frame.")
                         break
 
+                    # Inference on video frames
                     results = self.model.track(frame, conf=self.conf, iou=self.iou, classes=self.selected_ind) if self.enable_trk == "Yes" else self.model(frame, conf=self.conf, iou=self.iou, classes=self.selected_ind)
                     annotated_frame = results[0].plot()
 
