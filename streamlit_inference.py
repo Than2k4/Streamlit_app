@@ -1,22 +1,12 @@
-# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
-
 import io
-from typing import Any, List
-
 import cv2
 import streamlit as st
 from ultralytics import YOLO
+from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, RTCConfiguration
+from typing import Any
 from ultralytics.utils import LOGGER
-from ultralytics.utils.checks import check_requirements
-from ultralytics.utils.downloads import GITHUB_ASSETS_STEMS
-from streamlit_webrtc import (
-    webrtc_streamer,
-    VideoTransformerBase,
-    RTCConfiguration,
-    WebRtcMode,
-)
 
-# Cấu hình STUN/TURN servers để WebRTC hoạt động ở môi trường NAT/Firewall
+# Cấu hình RTC (STUN và TURN servers)
 RTC_CONFIGURATION = RTCConfiguration(
     {
         "iceServers": [
@@ -30,142 +20,85 @@ RTC_CONFIGURATION = RTCConfiguration(
     }
 )
 
-
-class YOLOTransformer(VideoTransformerBase):
-    """Xử lý khung hình từ webcam client"""
-
-    def __init__(self, model: YOLO, conf: float, iou: float, classes: List[int], enable_trk: bool):
+class VideoTransformer(VideoTransformerBase):
+    """Class to process video frames."""
+    
+    def __init__(self, model: YOLO, conf: float, iou: float, selected_ind: list):
         self.model = model
         self.conf = conf
         self.iou = iou
-        self.classes = classes
-        self.enable_trk = enable_trk
-
-    def transform(self, frame):
-        img = frame.to_ndarray(format="bgr24")
-        if self.enable_trk:
-            results = self.model.track(
-                img, conf=self.conf, iou=self.iou, classes=self.classes, persist=True
-            )
-        else:
-            results = self.model(img, conf=self.conf, iou=self.iou, classes=self.classes)
-        return results[0].plot()
-
-
-class VideoFileTransformer(VideoTransformerBase):
-    """Xử lý video file đã upload"""
-
-    def __init__(self, path: str, model: YOLO, conf: float, iou: float, classes: List[int], enable_trk: bool):
-        self.cap = cv2.VideoCapture(path)
-        self.model = model
-        self.conf = conf
-        self.iou = iou
-        self.classes = classes
-        self.enable_trk = enable_trk
-
-    def transform(self, frame):
-        success, img = self.cap.read()
-        if not success:
-            return frame
-        if self.enable_trk:
-            results = self.model.track(
-                img, conf=self.conf, iou=self.iou, classes=self.classes, persist=True
-            )
-        else:
-            results = self.model(img, conf=self.conf, iou=self.iou, classes=self.classes)
-        return results[0].plot()
-
+        self.selected_ind = selected_ind
+    
+    def transform(self, frame: Any):
+        """Transform the video frame using the YOLO model."""
+        # Chuyển đổi frame từ BGR sang RGB để YOLO có thể xử lý
+        results = self.model(frame, conf=self.conf, iou=self.iou, classes=self.selected_ind)
+        annotated_frame = results[0].plot()  # Vẽ các kết quả lên frame
+        return annotated_frame
 
 class Inference:
-    def __init__(self, **kwargs: Any):
-        check_requirements("streamlit>=1.29.0")
-        self.temp_dict = {"model": None, **kwargs}
-        self.model_path = self.temp_dict["model"]
-        LOGGER.info(f"Ultralytics Solutions: ✅ {self.temp_dict}")
+    """
+    Class để thực hiện inference với YOLO và Streamlit WebRTC.
+    """
+    
+    def __init__(self, model_path: str = None, conf: float = 0.25, iou: float = 0.45):
+        self.model_path = model_path
+        self.conf = conf
+        self.iou = iou
+        self.model = None
+        self.selected_ind = []
 
-        self.enable_trk = False
-        self.conf = 0.25
-        self.iou = 0.45
-        self.selected_ind: List[int] = []
-        self.model: YOLO
-
-    def web_ui(self):
-        st.set_page_config(page_title="Ultralytics Streamlit App", layout="wide")
-        st.markdown("<style>MainMenu {visibility: hidden;}</style>", unsafe_allow_html=True)
-        st.markdown(
-            "<h1 style='color:#FF64DA;text-align:center;'>Ultralytics YOLO Streamlit</h1>",
-            unsafe_allow_html=True,
-        )
-
-    def sidebar(self) -> str:
-        with st.sidebar:
-            st.image(
-                "https://raw.githubusercontent.com/ultralytics/assets/main/logo/Ultralytics_Logotype_Original.svg",
-                width=200,
-            )
-            src = st.selectbox("Source", ["webcam", "video"])
-            self.enable_trk = st.radio("Enable Tracking", ["Yes", "No"]) == "Yes"
-            self.conf = st.slider("Confidence", 0.0, 1.0, self.conf, 0.01)
-            self.iou = st.slider("IoU", 0.0, 1.0, self.iou, 0.01)
-
-            models = [x.replace("yolo", "YOLO") for x in GITHUB_ASSETS_STEMS if x.startswith("yolo11")]
-            if self.model_path:
-                models.insert(0, self.model_path.split(".pt")[0])
-            chosen = st.selectbox("Model", models)
-            with st.spinner("Loading model..."):
-                self.model = YOLO(f"{chosen.lower()}.pt")
-            st.success("Model loaded!")
-
-            names = list(self.model.names.values())
-            picked = st.multiselect("Classes", names, default=names[:3])
-            self.selected_ind = [names.index(c) for c in picked]
-
-        return src
+    def configure_model(self):
+        """Tải model YOLO."""
+        self.model = YOLO(self.model_path)  # Load model YOLO
+        class_names = list(self.model.names.values())  # Danh sách tên lớp
+        return class_names
 
     def run(self):
+        """Chạy Streamlit ứng dụng với WebRTC."""
+        # Cấu hình giao diện Streamlit
         self.web_ui()
-        src = self.sidebar()
 
-        common_args = dict(
+        # Cấu hình Sidebar
+        self.sidebar()
+
+        # Cấu hình model và lớp chọn
+        class_names = self.configure_model()
+        
+        selected_classes = st.sidebar.multiselect("Select Classes", class_names, default=class_names[:3])
+        self.selected_ind = [class_names.index(option) for option in selected_classes]
+        
+        # Tạo và khởi chạy webrtc stream
+        webrtc_streamer(
+            key="unique_key_for_this_stream",
             rtc_configuration=RTC_CONFIGURATION,
-            mode=WebRtcMode.SENDRECV,
-            video_frame_callback_timeout=30,  # tăng timeout lên 30s
+            video_transformer_factory=lambda: VideoTransformer(self.model, self.conf, self.iou, self.selected_ind),
         )
 
-        if src == "video":
-            vid = st.file_uploader("Upload video file", type=["mp4", "avi", "mov", "mkv"])
-            if vid:
-                path = "uploaded_video.mp4"
-                with open(path, "wb") as f:
-                    f.write(vid.read())
-                webrtc_streamer(
-                    key="video",
-                    video_processor_factory=lambda: VideoFileTransformer(
-                        path=path,
-                        model=self.model,
-                        conf=self.conf,
-                        iou=self.iou,
-                        classes=self.selected_ind,
-                        enable_trk=self.enable_trk,
-                    ),
-                    **common_args,
-                )
-        else:
-            webrtc_streamer(
-                key="webcam",
-                video_processor_factory=lambda: YOLOTransformer(
-                    model=self.model,
-                    conf=self.conf,
-                    iou=self.iou,
-                    classes=self.selected_ind,
-                    enable_trk=self.enable_trk,
-                ),
-                **common_args,
-            )
+    def web_ui(self):
+        """Thiết lập giao diện web cho Streamlit."""
+        menu_style_cfg = """<style>MainMenu {visibility: hidden;}</style>"""
+        main_title_cfg = """<div><h1 style="color:#FF64DA; text-align:center; font-size:40px; margin-top:-50px;
+        font-family: 'Archivo', sans-serif; margin-bottom:20px;">Ultralytics YOLO Streamlit Application</h1></div>"""
+        sub_title_cfg = """<div><h4 style="color:#042AFF; text-align:center; font-family: 'Archivo', sans-serif; 
+        margin-top:-15px; margin-bottom:50px;">Experience real-time object detection on your webcam with the power 
+        of Ultralytics YOLO! 🚀</h4></div>"""
+
+        # Thiết lập cấu hình cho trang web
+        st.set_page_config(page_title="Ultralytics Streamlit App", layout="wide")
+        st.markdown(menu_style_cfg, unsafe_allow_html=True)
+        st.markdown(main_title_cfg, unsafe_allow_html=True)
+        st.markdown(sub_title_cfg, unsafe_allow_html=True)
+
+    def sidebar(self):
+        """Thiết lập thanh bên cho Streamlit để chọn các tham số."""
+        st.sidebar.title("User Configuration")
+        self.model_path = st.sidebar.text_input("Model Path", "yolov8n.pt")  # Đường dẫn tới model YOLO
+        self.conf = float(st.sidebar.slider("Confidence Threshold", 0.0, 1.0, self.conf, 0.01))
+        self.iou = float(st.sidebar.slider("IoU Threshold", 0.0, 1.0, self.iou, 0.01))
 
 
 if __name__ == "__main__":
-    import sys
-
-    model_arg = sys.argv[1] if len(sys.argv) > 1 else None
-    Inference(model=model_arg).run()
+    # Khởi tạo và chạy ứng dụng
+    inf = Inference(model_path="yolov8n.pt")
+    inf.run()
