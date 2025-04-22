@@ -9,7 +9,22 @@ from ultralytics import YOLO
 from ultralytics.utils import LOGGER
 from ultralytics.utils.checks import check_requirements
 from ultralytics.utils.downloads import GITHUB_ASSETS_STEMS
+import streamlit as st
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
 
+class VideoProcessor(VideoProcessorBase):
+    """Xử lý video từ webcam trên server với YOLO."""
+    
+    def __init__(self):
+        self.model = YOLO("yolov8n.pt")  # Tải mô hình YOLO
+        self.conf = 0.25  # Ngưỡng độ tin cậy
+        self.iou = 0.45  # Ngưỡng IoU cho NMS
+
+    def recv(self, frame):
+        img = frame.to_ndarray(format="bgr24")  # Chuyển khung hình sang NumPy array
+        results = self.model(img, conf=self.conf, iou=self.iou)  # Nhận diện đối tượng
+        annotated_img = results[0].plot()  # Tạo hình ảnh có chú thích
+        return av.VideoFrame.from_ndarray(annotated_img, format="bgr24")
 
 class Inference:
     """
