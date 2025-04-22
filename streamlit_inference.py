@@ -16,9 +16,18 @@ from streamlit_webrtc import (
     WebRtcMode,
 )
 
-# Cấu hình STUN server để WebRTC hoạt động tốt trên môi trường deploy
+# Cấu hình STUN/TURN servers để WebRTC hoạt động ở môi trường NAT/Firewall
 RTC_CONFIGURATION = RTCConfiguration(
-    {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
+    {
+        "iceServers": [
+            {"urls": ["stun:stun.l.google.com:19302"]},
+            {
+                "urls": ["turn:numb.viagenie.ca"],
+                "username": "webrtc@live.com",
+                "credential": "muazkh",
+            },
+        ]
+    }
 )
 
 
@@ -74,7 +83,6 @@ class Inference:
         self.model_path = self.temp_dict["model"]
         LOGGER.info(f"Ultralytics Solutions: ✅ {self.temp_dict}")
 
-        # Giá trị mặc định
         self.enable_trk = False
         self.conf = 0.25
         self.iou = 0.45
@@ -100,7 +108,6 @@ class Inference:
             self.conf = st.slider("Confidence", 0.0, 1.0, self.conf, 0.01)
             self.iou = st.slider("IoU", 0.0, 1.0, self.iou, 0.01)
 
-            # Chọn model
             models = [x.replace("yolo", "YOLO") for x in GITHUB_ASSETS_STEMS if x.startswith("yolo11")]
             if self.model_path:
                 models.insert(0, self.model_path.split(".pt")[0])
@@ -109,7 +116,6 @@ class Inference:
                 self.model = YOLO(f"{chosen.lower()}.pt")
             st.success("Model loaded!")
 
-            # Chọn classes
             names = list(self.model.names.values())
             picked = st.multiselect("Classes", names, default=names[:3])
             self.selected_ind = [names.index(c) for c in picked]
@@ -120,6 +126,12 @@ class Inference:
         self.web_ui()
         src = self.sidebar()
 
+        common_args = dict(
+            rtc_configuration=RTC_CONFIGURATION,
+            mode=WebRtcMode.SENDRECV,
+            video_frame_callback_timeout=30,  # tăng timeout lên 30s
+        )
+
         if src == "video":
             vid = st.file_uploader("Upload video file", type=["mp4", "avi", "mov", "mkv"])
             if vid:
@@ -128,8 +140,6 @@ class Inference:
                     f.write(vid.read())
                 webrtc_streamer(
                     key="video",
-                    mode=WebRtcMode.SENDRECV,
-                    rtc_configuration=RTC_CONFIGURATION,
                     video_processor_factory=lambda: VideoFileTransformer(
                         path=path,
                         model=self.model,
@@ -138,12 +148,11 @@ class Inference:
                         classes=self.selected_ind,
                         enable_trk=self.enable_trk,
                     ),
+                    **common_args,
                 )
         else:
             webrtc_streamer(
                 key="webcam",
-                mode=WebRtcMode.SENDRECV,
-                rtc_configuration=RTC_CONFIGURATION,
                 video_processor_factory=lambda: YOLOTransformer(
                     model=self.model,
                     conf=self.conf,
@@ -151,6 +160,7 @@ class Inference:
                     classes=self.selected_ind,
                     enable_trk=self.enable_trk,
                 ),
+                **common_args,
             )
 
 
