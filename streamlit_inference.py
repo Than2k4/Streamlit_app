@@ -1,6 +1,6 @@
 import io
-import cv2
 import numpy as np
+import cv2
 import streamlit as st
 from ultralytics import YOLO
 from ultralytics.utils import LOGGER
@@ -47,7 +47,10 @@ class Inference:
                     out.write(g.read())
                 self.vid_file_name = "uploaded_video.mp4"
         elif self.source == "webcam":
-            self.vid_file_name = 0  # Set to webcam index 0
+            img_file = st.camera_input("Start Webcam")
+            if img_file:
+                bytes_data = img_file.getvalue()
+                self.vid_file_name = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
 
     def configure(self):
         """Configures the model and selects classes for inference."""
@@ -65,8 +68,8 @@ class Inference:
 
         if st.sidebar.button("Start"):
             stop_button = st.button("Stop")
-
-            if self.source == "video" and isinstance(self.vid_file_name, str):  # Process video file
+            
+            if isinstance(self.vid_file_name, str):  # Process video file
                 cap = cv2.VideoCapture(self.vid_file_name)
                 if not cap.isOpened():
                     st.error("Could not open video file.")
@@ -91,32 +94,15 @@ class Inference:
                 cap.release()
                 cv2.destroyAllWindows()
 
-            elif self.source == "webcam" and isinstance(self.vid_file_name, int):  # Process webcam input
-                cap = cv2.VideoCapture(self.vid_file_name)
-                if not cap.isOpened():
-                    st.error("Could not open webcam.")
-                    return
-                
-                while True:
-                    success, frame = cap.read()
-                    if not success:
-                        st.warning("Failed to read frame from webcam.")
-                        break
-                    
-                    results = self.model.track(frame, conf=self.conf, iou=self.iou, classes=self.selected_ind) if self.enable_trk == "Yes" else self.model(frame, conf=self.conf, iou=self.iou, classes=self.selected_ind)
-                    annotated_frame = results[0].plot()
+            elif isinstance(self.vid_file_name, np.ndarray):  # Process webcam input
+                frame = self.vid_file_name
+                results = self.model(frame, conf=self.conf, iou=self.iou, classes=self.selected_ind)
+                annotated_frame = results[0].plot()
 
-                    if stop_button:
-                        cap.release()
-                        st.stop()
-
-                    self.org_frame.image(frame, channels="BGR")
-                    self.ann_frame.image(annotated_frame, channels="BGR")
-
-                cap.release()
-                cv2.destroyAllWindows()
+                self.org_frame.image(frame, channels="BGR")
+                self.ann_frame.image(annotated_frame, channels="BGR")
 
 if __name__ == "__main__":
     import sys
     model_path = sys.argv[1] if len(sys.argv) > 1 else None
-    Inference(model=model_path).inference()
+    Inference(model=model_path).inference()	
